@@ -1,0 +1,18 @@
+{
+  "ILSWS_USERNAME": "admin",
+  "ILSWS_PASSWORD": "password",
+  "ILSWS_HOSTNAME": "ILSWS_HOSTNAME",
+  "ILSWS_PORT": 443,
+  "ILSWS_WEBAPP": "WEBAPP",
+  "ILSWS_CLIENTID": "CLIENTID",
+  "HTML_OUTPUT_DIR": "/var/www/html",
+  "XSL_ITEM": "/etc/squired/squirei2xhtml.xsl",
+  "XSL_TITLE": "/etc/squired/squiret2xhtml.xsl",
+  "BRANCHES": {
+    "BRANCH_CODE": "Branch Name"
+  },
+  "LOCATION_FLAG_MAPPING": {
+    "LOCATION_CODE": "STATUS"
+  }
+}
+
