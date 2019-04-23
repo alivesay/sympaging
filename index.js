@@ -16,6 +16,7 @@ axios.defaults.headers.common['sd-originating-app-id'] = ILSWS_ORIGINATING_APP_I
 axios.defaults.headers.common['x-sirs-clientID'] = config.ILSWS_CLIENTID;
 axios.defaults.headers.common['Accept'] = 'application/json';
 axios.defaults.headers.common['Content-Type'] = 'application/json';
+axios.defaults.timeout = 10000;
 
 axios.interceptors.request.use(req => {
   console.log(req.url);
@@ -94,8 +95,8 @@ function ILSWSRequest_patron(token, key) {
 }
 
 function writeCsv(branch, records) {
-  let titles = records.filter(record => record.holdType === 'COPY' && record.status != 'EXPIRED');
-  let items = records.filter(record => record.holdType === 'TITLE' && record.status != 'EXPIRED');
+  let titles = records.filter(record => record.holdType === 'COPY' && record.status !== 'EXPIRED');
+  let items = records.filter(record => record.holdType === 'TITLE' && record.status !== 'EXPIRED');
 
   let csvWriter = createCsvWriter({
     path: `/tmp/${config.BRANCHES[branch]}_Title.csv`,
@@ -105,8 +106,6 @@ function writeCsv(branch, records) {
       { id: 'author', title: 'AUTHOR' },
       { id: 'callNumber', title: 'CALL #' },
       { id: 'volume', title: 'VOLUME' },
-//      { id: 'bib', title: 'BIB #' },
-//      { id: 'holdType', title: 'HOLD TYPE' },
       { id: 'currentLocation', title: 'LOCATION' }
     ]});
 
@@ -120,8 +119,6 @@ function writeCsv(branch, records) {
       { id: 'author', title: 'AUTHOR' },
       { id: 'callNumber', title: 'CALL #' },
       { id: 'volume', title: 'VOLUME' },
-//      { id: 'bib', title: 'BIB #' },
-//      { id: 'holdType', title: 'HOLD TYPE' },
       { id: 'currentLocation', title: 'LOCATION' }
     ]});
 
@@ -129,8 +126,8 @@ function writeCsv(branch, records) {
 }
 
 function writeXml(branch, records) {
-  let titles = records.filter(record => record.holdType === 'COPY');
-  let items = records.filter(record => record.holdType === 'TITLE');
+  let titles = records.filter(record => record.holdType === 'COPY' && record.status !== 'EXPIRED');
+  let items = records.filter(record => record.holdType === 'TITLE' && record.status !== 'EXPIRED');
   let itemHtml = `${config.HTML_OUTPUT_DIR}/${config.BRANCHES[branch]}/latest_item.html`;
   let titleHtml = `${config.HTML_OUTPUT_DIR}/${config.BRANCHES[branch]}/latest_title.html`;
 
@@ -245,9 +242,15 @@ async function start(branch) {
   })
   .catch(error => {
     console.log(error.toString());
+    return Promise.reject();
   });
+  
 }
 
-for (let branch in config.BRANCHES) {
-  start(branch);
+async function process() {
+  for (let branch in config.BRANCHES) {
+     await start(branch);
+  }
 }
+
+process();
