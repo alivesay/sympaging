@@ -1,5 +1,11 @@
 'use strict';
 
+//    _______  ______ ___  ____  ____ _____ _(_)___  ____ _
+//   / ___/ / / / __ `__ \/ __ \/ __ `/ __ `/ / __ \/ __ `/
+//  (__  ) /_/ / / / / / / /_/ / /_/ / /_/ / / / / / /_/ / 
+// /____/\__, /_/ /_/ /_/ .___/\__,_/\__, /_/_/ /_/\__, /  
+//      /____/         /_/          /____/        /____/  
+
 const axios = require('axios');
 const { ConcurrencyManager } = require('axios-concurrency');
 const axiosRetry = require('axios-retry');
