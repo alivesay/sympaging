@@ -1,6 +1,8 @@
 'use strict';
 
 const axios = require('axios');
+const { ConcurrencyManager } = require('axios-concurrency');
+const axiosRetry = require('axios-retry');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 const xmlbuilder = require('xmlbuilder');
 const moment = require('moment');
@@ -9,90 +11,40 @@ const tmp = require('tmp');
 
 const config = require('./config.json');
 
-const ILSWS_BASE_URI = `https://${config.ILSWS_HOSTNAME}:${config.ILSWS_PORT}/${config.ILSWS_WEBAPP}`;
+const ILSWS_BASE_URI = `https://${config.ILSWS_HOSTNAME}:${config.ILSWS_PORT}/${config.ILSWS_WEBAPP}/`;
 const ILSWS_ORIGINATING_APP_ID = 'sympaging';
+const MAX_CONCURRENT_REQUESTS = 5;
 
-axios.defaults.headers.common['sd-originating-app-id'] = ILSWS_ORIGINATING_APP_ID;
-axios.defaults.headers.common['x-sirs-clientID'] = config.ILSWS_CLIENTID;
-axios.defaults.headers.common['Accept'] = 'application/json';
-axios.defaults.headers.common['Content-Type'] = 'application/json';
-axios.defaults.timeout = 10000;
+const api = axios.create({
+  baseURL: ILSWS_BASE_URI,
+  timeout: 3000,
+  headers: {
+    'sd-originating-app-id': ILSWS_ORIGINATING_APP_ID,
+    'x-sirs-clientID': config.ILSWS_CLIENTID,
+    'Accept': 'application/json',
+    'Content-Type': 'application/json'
+  }
+});
 
-axios.interceptors.request.use(req => {
-  console.log(req.url);
+let reqCount = 0, itemCount = 0;
+api.interceptors.request.use(req => {
+  reqCount++;
   return req;
 });
 
-function ILSWSRequest_loginUser(username, password) {
-  return axios({
-    method: 'POST',
-    url: `${ILSWS_BASE_URI}/rest/security/loginUser`,
-    params: {
-      login: username,
-      password: password
-    }
-  });
-}
+axiosRetry(api, { retries: 3, retryDelay: axiosRetry.exponetialDelay });
 
-function ILSWSRequest_holdItemPullList(token, branch) {
-  return axios({
-    method: 'GET',
-    url: `${ILSWS_BASE_URI}/circulation/holdItemPullList/key/${branch}?includeFields=pullList{*,hold{*}}`,
-    headers: {
-      'x-sirs-sessionToken': token
-    }
-  });
-}
+const manager = ConcurrencyManager(api, MAX_CONCURRENT_REQUESTS);
 
-function ILSWSRequest_holdRecord(token, key) {
-  return axios({
-    method: 'GET',
-    url: `${ILSWS_BASE_URI}/circulation/holdRecord/key/${key}`,
-    headers: {
-      'x-sirs-sessionToken': token
-    }
-  });
-}
-
-function ILSWSRequest_bib(token, key) {
-  return axios({
-    method: 'GET',
-    url: `${ILSWS_BASE_URI}/catalog/bib/key/${key}`,
-    headers: {
-      'x-sirs-sessionToken': token
-    }
-  });
-}
-
-function ILSWSRequest_call(token, key) {
-  return axios({
-    method: 'GET',
-    url: `${ILSWS_BASE_URI}/catalog/call/key/${key}`,
-    headers: {
-      'x-sirs-sessionToken': token
-    }
-  });
-}
-
-function ILSWSRequest_item(token, key) {
-  return axios({
-    method: 'GET',
-    url: `${ILSWS_BASE_URI}/catalog/item/key/${key}`,
-    headers: {
-      'x-sirs-sessionToken': token
-    }
-  });
-}
-
-function ILSWSRequest_patron(token, key) {
-  return axios({
-    method: 'GET',
-    url: `${ILSWS_BASE_URI}/user/patron/key/${key}`,
-    headers: {
-      'x-sirs-sessionToken': token
-    }
-  });
-}
+const ILSWS = {
+  loginUser: (username, password) => api.post(`rest/security/loginUser`, {}, { params: { login: username, password: password }}),
+  holdItemPullList: (token, branch) => api.get(`circulation/holdItemPullList/key/${branch}`, { headers: { 'x-sirs-sessionToken': token }}),
+  holdRecord: (token, key) => api.get(`circulation/holdRecord/key/${key}`, { headers: { 'x-sirs-sessionToken': token }}),
+  bib: (token, key) => api.get(`catalog/bib/key/${key}`, { headers: { 'x-sirs-sessionToken': token }}),
+  call: (token, key) => api.get(`catalog/call/key/${key}`, { headers: { 'x-sirs-sessionToken': token }}),
+  item: (token, key) => api.get(`catalog/item/key/${key}`, { headers: { 'x-sirs-sessionToken': token }}),
+  patron: (token, key) => api.get(`user/patron/key/${key}`, { headers: {'x-sirs-sessionToken': token }})
+};
 
 function writeCsv(branch, records) {
   let titles = records.filter(record => record.holdType === 'COPY' && record.status !== 'EXPIRED');
@@ -198,59 +150,77 @@ function writeXml(branch, records) {
   }
 }
 
-async function start(branch) {
+let errorCount = 0;
+const isError = (obj) => obj instanceof Error && ++errorCount;
+
+function processBranch(branch) {
   let records = [];
 
-  await ILSWSRequest_loginUser(config.ILSWS_USERNAME, config.ILSWS_PASSWORD)
-  .then(loginResponse => loginResponse.data)
-  .then(loginData => Promise.all([loginData, ILSWSRequest_holdItemPullList(loginData.sessionToken, branch)]))
+  return ILSWS.loginUser(config.ILSWS_USERNAME, config.ILSWS_PASSWORD)
+  .then(loginResponse => {
+     if (isError(loginResponse)) throw loginResponse;
+
+     return loginResponse.data;
+   })
+  .then(loginData => Promise.all([loginData, ILSWS.holdItemPullList(loginData.sessionToken, branch)]))
   .then(([loginData, pullListResponse]) => Promise.all([loginData, pullListResponse.data]))
   .then(([loginData, pullListData]) => {
-    return axios.all(pullListData.fields.pullList.map(record => {
-      return Promise.all([ILSWSRequest_holdRecord(loginData.sessionToken, record.fields.holdRecord.key),
-        ILSWSRequest_item(loginData.sessionToken, record.fields.item.key)]);
+    if (isError(pullListData)) return;
+    itemCount = pullListData.fields.pullList.length;
+    
+    return Promise.all(pullListData.fields.pullList.map(record => {
+      return Promise.all([ILSWS.holdRecord(loginData.sessionToken, record.fields.holdRecord.key),
+        ILSWS.item(loginData.sessionToken, record.fields.item.key)]);
     }))
     .then(axios.spread(function ( ...holdItems) {
       return axios.all(holdItems.map(holdItem => {
-        return Promise.all([ILSWSRequest_patron(loginData.sessionToken, holdItem[0].data.fields.patron.key),
-          ILSWSRequest_bib(loginData.sessionToken, holdItem[0].data.fields.bib.key),
-          ILSWSRequest_call(loginData.sessionToken, holdItem[1].data.fields.call.key),
-          {
+        if (holdItem.some(isError)) return;
+
+        return Promise.all([ILSWS.patron(loginData.sessionToken, holdItem[0].data.fields.patron.key),
+          ILSWS.bib(loginData.sessionToken, holdItem[0].data.fields.bib.key),
+          ILSWS.call(loginData.sessionToken, holdItem[1].data.fields.call.key), {
             holdType: holdItem[0].data.fields.holdType,
             status: holdItem[0].data.fields.status,
             currentLocation: holdItem[1].data.fields.currentLocation.key
           }]);
       }))
-      .then(axios.spread(function ( ...patronBibCall) {
-        for (let x of patronBibCall) {
+      .then(axios.spread(function ( ...patronBibCallDetails) {
+
+        for (let details of patronBibCallDetails) {
+          if (!details || details.some(isError)) return;
+
           records.push({
-            barcode: x[1].data.fields.barcode,
-            title:   x[1].data.fields.title,
-            author:  x[1].data.fields.author,
-            callNumber: x[2].data.fields.callNumber,
-            volume: x[2].data.fields.volumetric || '',
-            bib: x[1].data.fields.titleControlNumber,
-            holdType: x[3].holdType,
-            currentLocation: x[3].currentLocation
+            barcode: details[1].data.fields.barcode,
+            title:   details[1].data.fields.title,
+            author:  details[1].data.fields.author,
+            callNumber: details[2].data.fields.callNumber,
+            volume: details[2].data.fields.volumetric || '',
+            bib: details[1].data.fields.titleControlNumber,
+            holdType: details[3].holdType,
+            currentLocation: details[3].currentLocation
           });
         }
 
         writeCsv(branch, records);
 	writeXml(branch, records);
-      }))
+      }));
     }));
-  })
-  .catch(error => {
-    console.log(error.toString());
-    return Promise.reject();
   });
-  
 }
 
-async function process() {
-  for (let branch in config.BRANCHES) {
-     await start(branch);
+async function start() {
+  for (let branch of Object.keys(config.BRANCHES)) {
+    let start = new Date();
+    try {
+      await processBranch(branch);
+    } catch (error) {
+      console.log(error.toString());
+      process.exit(1);
+    }
+    console.log(`${branch}: ${new Date() - start}ms`);
   }
+
+  console.log(`${MAX_CONCURRENT_REQUESTS}, ${errorCount}, ${itemCount}, ${reqCount}`);
 }
 
-process();
+start();
