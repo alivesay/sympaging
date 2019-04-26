@@ -19,11 +19,11 @@ const config = require('./config.json');
 
 const ILSWS_BASE_URI = `https://${config.ILSWS_HOSTNAME}:${config.ILSWS_PORT}/${config.ILSWS_WEBAPP}/`;
 const ILSWS_ORIGINATING_APP_ID = 'sympaging';
-const MAX_CONCURRENT_REQUESTS = 5;
+const MAX_CONCURRENT_REQUESTS = 2;
 
 const api = axios.create({
   baseURL: ILSWS_BASE_URI,
-  timeout: 3000,
+  timeout: 600000,
   headers: {
     'sd-originating-app-id': ILSWS_ORIGINATING_APP_ID,
     'x-sirs-clientID': config.ILSWS_CLIENTID,
@@ -32,7 +32,9 @@ const api = axios.create({
   }
 });
 
-let reqCount = 0, itemCount = 0;
+let reqCount = 0, itemCount = 0, errorCount = 0;
+const isError = (obj) => obj instanceof Error && ++errorCount;
+
 api.interceptors.request.use(req => {
   reqCount++;
   return req;
@@ -44,17 +46,18 @@ const manager = ConcurrencyManager(api, MAX_CONCURRENT_REQUESTS);
 
 const ILSWS = {
   loginUser: (username, password) => api.post(`rest/security/loginUser`, {}, { params: { login: username, password: password }}),
-  holdItemPullList: (token, branch) => api.get(`circulation/holdItemPullList/key/${branch}`, { headers: { 'x-sirs-sessionToken': token }}),
-  holdRecord: (token, key) => api.get(`circulation/holdRecord/key/${key}`, { headers: { 'x-sirs-sessionToken': token }}),
-  bib: (token, key) => api.get(`catalog/bib/key/${key}`, { headers: { 'x-sirs-sessionToken': token }}),
-  call: (token, key) => api.get(`catalog/call/key/${key}`, { headers: { 'x-sirs-sessionToken': token }}),
-  item: (token, key) => api.get(`catalog/item/key/${key}`, { headers: { 'x-sirs-sessionToken': token }}),
-  patron: (token, key) => api.get(`user/patron/key/${key}`, { headers: {'x-sirs-sessionToken': token }})
+  holdItemPullList: (token, branch) => {
+    return api.get(`circulation/holdItemPullList/key/${branch}`, {
+      params: {
+        includeFields: 'pullList{holdRecord{holdType,status},item{call{bib{title,author,titleControlNumber},callNumber,volumetric},barcode,currentLocation}}'
+      },
+      headers: { 'x-sirs-sessionToken': token }});
+  }
 };
 
 function writeCsv(branch, records) {
-  let titles = records.filter(record => record.holdType === 'COPY' && record.status !== 'EXPIRED');
-  let items = records.filter(record => record.holdType === 'TITLE' && record.status !== 'EXPIRED');
+  let titles = records.filter(record => record.holdType === 'COPY');
+  let items = records.filter(record => record.holdType === 'TITLE');
 
   let csvWriter = createCsvWriter({
     path: `/tmp/${config.BRANCHES[branch]}_Title.csv`,
@@ -84,8 +87,8 @@ function writeCsv(branch, records) {
 }
 
 function writeXml(branch, records) {
-  let titles = records.filter(record => record.holdType === 'COPY' && record.status !== 'EXPIRED');
-  let items = records.filter(record => record.holdType === 'TITLE' && record.status !== 'EXPIRED');
+  let titles = records.filter(record => record.holdType === 'COPY');
+  let items = records.filter(record => record.holdType === 'TITLE');
   let itemHtml = `${config.HTML_OUTPUT_DIR}/${config.BRANCHES[branch]}/latest_item.html`;
   let titleHtml = `${config.HTML_OUTPUT_DIR}/${config.BRANCHES[branch]}/latest_title.html`;
 
@@ -156,9 +159,6 @@ function writeXml(branch, records) {
   }
 }
 
-let errorCount = 0;
-const isError = (obj) => obj instanceof Error && ++errorCount;
-
 function processBranch(branch) {
   let records = [];
 
@@ -169,48 +169,27 @@ function processBranch(branch) {
      return loginResponse.data;
    })
   .then(loginData => Promise.all([loginData, ILSWS.holdItemPullList(loginData.sessionToken, branch)]))
-  .then(([loginData, pullListResponse]) => Promise.all([loginData, pullListResponse.data]))
+  .then(([loginData, pullListResponse]) => Promise.all([loginData, pullListResponse.data])) 
   .then(([loginData, pullListData]) => {
     if (isError(pullListData)) return;
-    itemCount = pullListData.fields.pullList.length;
+
+    pullListData.fields.pullList.filter(record => record.fields.holdRecord.fields.status !== 'EXPIRED').map(record => {
+      records.push({
+        barcode: record.fields.item.fields.barcode,
+        title: record.fields.item.fields.call.fields.bib.fields.title, 
+        author:  record.fields.item.fields.call.fields.bib.fields.author,
+        callNumber: record.fields.item.fields.call.fields.callNumber,
+        volume: record.fields.item.fields.call.fields.volumetric || '',
+        bib: record.fields.item.fields.call.fields.bib.fields.titleControlNumber,
+        holdType: record.fields.holdRecord.fields.holdType,
+        currentLocation: record.fields.item.fields.currentLocation
+      });
+    });
+
+    itemCount += records.length;
     
-    return Promise.all(pullListData.fields.pullList.map(record => {
-      return Promise.all([ILSWS.holdRecord(loginData.sessionToken, record.fields.holdRecord.key),
-        ILSWS.item(loginData.sessionToken, record.fields.item.key)]);
-    }))
-    .then(axios.spread(function ( ...holdItems) {
-      return axios.all(holdItems.map(holdItem => {
-        if (holdItem.some(isError)) return;
-
-        return Promise.all([ILSWS.patron(loginData.sessionToken, holdItem[0].data.fields.patron.key),
-          ILSWS.bib(loginData.sessionToken, holdItem[0].data.fields.bib.key),
-          ILSWS.call(loginData.sessionToken, holdItem[1].data.fields.call.key), {
-            holdType: holdItem[0].data.fields.holdType,
-            status: holdItem[0].data.fields.status,
-            currentLocation: holdItem[1].data.fields.currentLocation.key
-          }]);
-      }))
-      .then(axios.spread(function ( ...patronBibCallDetails) {
-
-        for (let details of patronBibCallDetails) {
-          if (!details || details.some(isError)) return;
-
-          records.push({
-            barcode: details[1].data.fields.barcode,
-            title:   details[1].data.fields.title,
-            author:  details[1].data.fields.author,
-            callNumber: details[2].data.fields.callNumber,
-            volume: details[2].data.fields.volumetric || '',
-            bib: details[1].data.fields.titleControlNumber,
-            holdType: details[3].holdType,
-            currentLocation: details[3].currentLocation
-          });
-        }
-
-        writeCsv(branch, records);
-	writeXml(branch, records);
-      }));
-    }));
+    writeCsv(branch, records);
+    writeXml(branch, records);
   });
 }
 
@@ -220,6 +199,7 @@ async function start() {
     try {
       await processBranch(branch);
     } catch (error) {
+      console.log(error);
       console.log(error.toString());
       process.exit(1);
     }
