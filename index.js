@@ -49,7 +49,7 @@ const ILSWS = {
   holdItemPullList: (token, branch) => {
     return api.get(`circulation/holdItemPullList/key/${branch}`, {
       params: {
-        includeFields: 'pullList{holdRecord{holdType,status},item{call{bib{title,author,titleControlNumber},callNumber,volumetric},barcode,currentLocation}}'
+        includeFields: 'pullList{holdRecord{holdType,status},item{call{bib{title,author,titleControlNumber},callNumber,volumetric},barcode,currentLocation{description}}}'
       },
       headers: { 'x-sirs-sessionToken': token }});
   }
@@ -109,7 +109,8 @@ function writeXml(branch, records) {
     for (let record of titles) {
       root.ele({
         'record': {
-          'location': branch,
+          'location': record.currentLocation,
+          'loc_desc': record.locationDesc,
           'title': record.title,
           'call_number': record.callNumber,
           'barcode': record.barcode,
@@ -138,7 +139,8 @@ function writeXml(branch, records) {
     for (let record of items) {
       root.ele({
         'record': {
-          'location': branch,
+          'location': record.currentLocation,
+          'loc_desc': record.locationDesc,
           'title': record.title,
           'call_number': record.callNumber,
           'barcode': record.barcode,
@@ -182,12 +184,15 @@ function processBranch(branch) {
         volume: record.fields.item.fields.call.fields.volumetric || '',
         bib: record.fields.item.fields.call.fields.bib.fields.titleControlNumber,
         holdType: record.fields.holdRecord.fields.holdType,
-        currentLocation: record.fields.item.fields.currentLocation
+        currentLocation: record.fields.item.fields.currentLocation.key,
+        locationDesc: record.fields.item.fields.currentLocation.fields.description
       });
     });
 
     itemCount += records.length;
-    
+
+    records.sort((a,b) => config.SORT_ORDER.map(f => a[f].localeCompare(b[f])).find(e => e !== 0));
+        
     writeCsv(branch, records);
     writeXml(branch, records);
   });
