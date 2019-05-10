@@ -56,41 +56,37 @@ const ILSWS = {
 };
 
 function writeCsv(branch, records) {
-  let titles = records.filter(record => record.holdType === 'COPY');
-  let items = records.filter(record => record.holdType === 'TITLE');
+  const titles = records.filter(record => record.holdType === 'COPY');
+  const items = records.filter(record => record.holdType === 'TITLE');
+  const csvHeader = [
+    { id: 'barcode', title: 'BARCODE' },
+    { id: 'title', title: 'TITLE' },
+    { id: 'author', title: 'AUTHOR' },
+    { id: 'callNumber', title: 'CALL #' },
+    { id: 'volume', title: 'VOLUME' },
+    { id: 'currentLocation', title: 'LOCATION' }
+  ];
 
   let csvWriter = createCsvWriter({
     path: `/tmp/${config.BRANCHES[branch]}_Title.csv`,
-    header: [
-      { id: 'barcode', title: 'BARCODE' },
-      { id: 'title', title: 'TITLE' },
-      { id: 'author', title: 'AUTHOR' },
-      { id: 'callNumber', title: 'CALL #' },
-      { id: 'volume', title: 'VOLUME' },
-      { id: 'currentLocation', title: 'LOCATION' }
-    ]});
+    header: csvHeader
+  });
 
     csvWriter.writeRecords(titles);
   
   csvWriter = createCsvWriter({
     path: `/tmp/${config.BRANCHES[branch]}_Items.csv`,
-    header: [
-      { id: 'barcode', title: 'BARCODE' },
-      { id: 'title', title: 'TITLE' },
-      { id: 'author', title: 'AUTHOR' },
-      { id: 'callNumber', title: 'CALL #' },
-      { id: 'volume', title: 'VOLUME' },
-      { id: 'currentLocation', title: 'LOCATION' }
-    ]});
+    header: csvHeader
+  });
 
-    csvWriter.writeRecords(items);
+  csvWriter.writeRecords(items);
 }
 
 function writeXml(branch, records) {
-  let titles = records.filter(record => record.holdType === 'COPY');
-  let items = records.filter(record => record.holdType === 'TITLE');
-  let itemHtml = `${config.HTML_OUTPUT_DIR}/${config.BRANCHES[branch]}/latest_item.html`;
-  let titleHtml = `${config.HTML_OUTPUT_DIR}/${config.BRANCHES[branch]}/latest_title.html`;
+  const titles = records.filter(record => record.holdType === 'COPY');
+  const items = records.filter(record => record.holdType === 'TITLE');
+  const itemHtml = `${config.HTML_OUTPUT_DIR}/${config.BRANCHES[branch]}/latest_item.html`;
+  const titleHtml = `${config.HTML_OUTPUT_DIR}/${config.BRANCHES[branch]}/latest_title.html`;
 
   let root;
   let tmpxmlfile;
