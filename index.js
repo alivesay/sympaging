@@ -55,9 +55,12 @@ const ILSWS = {
   }
 };
 
+const holdTypes = [
+  { id: 'COPY', csvSuffix: 'Title', htmlSuffix: 'title', xslConfigOption: 'XSL_TITLE' },
+  { id: 'TITLE', csvSuffix: 'Items', htmlSuffix: 'item', xslConfigOption: 'XSL_ITEM' }
+];
+
 function writeCsv(branch, records) {
-  const titles = records.filter(record => record.holdType === 'COPY');
-  const items = records.filter(record => record.holdType === 'TITLE');
   const csvHeader = [
     { id: 'barcode', title: 'BARCODE' },
     { id: 'title', title: 'TITLE' },
@@ -67,87 +70,53 @@ function writeCsv(branch, records) {
     { id: 'currentLocation', title: 'LOCATION' }
   ];
 
-  [{id: 'COPY', name: 'Title'}, {id: 'TITLE', name: 'Items'}].forEach(holdType => {
+  holdTypes.forEach(holdType => {
     createCsvWriter({
-      path: `/tmp/${config.BRANCHES[branch]}_${holdType.name}.csv`,
+      path: `/tmp/${config.BRANCHES[branch]}_${holdType.csvSuffix}.csv`,
       header: csvHeader
     }).writeRecords(records.filter(record => record.holdType === holdType.id));
   });
 }
 
-function writeXml(branch, records) {
-  const titles = records.filter(record => record.holdType === 'COPY');
-  const items = records.filter(record => record.holdType === 'TITLE');
-  const itemHtml = `${config.HTML_OUTPUT_DIR}/${config.BRANCHES[branch]}/latest_item.html`;
-  const titleHtml = `${config.HTML_OUTPUT_DIR}/${config.BRANCHES[branch]}/latest_title.html`;
-
+function writeHtml(branch, records) {
   let root;
-  let tmpxmlfile;
+  let tmpXmlFile;
+  let htmlFile;
 
-  try {
-    fs.unlinkSync(itemHtml);
-    fs.unlinkSync(titleHtml);
-  } catch (e) {}
+  holdTypes.forEach(holdType => {
+    htmlFile = `${config.HTML_OUTPUT_DIR}/${config.BRANCHES[branch]}/latest_${holdType.htmlSuffix}.html`;
+    try { fs.unlinkSync(htmlFile); } catch (e) {}
 
-  if (titles.length > 0) {
-    root = xmlbuilder.create('paging_list', {
-      'version': '1.0',
-      'encoding': 'UTF-8'
-    }).att('count', titles.length).att('location', config.BRANCHES[branch]).att('timestamp', moment().utcOffset(-8).toISOString(true));
-
-    for (let record of titles) {
-      root.ele({
-        'record': {
-          'location': record.currentLocation,
-          'loc_desc': record.locationDesc,
-          'title': record.title,
-          'call_number': record.callNumber,
-          'barcode': record.barcode,
-          'author': record.author
-        }
-      });
-    }
+    const holdItems = records.filter(record => record.holdType === holdType.id);
     
-    tmpxmlfile  = tmp.fileSync();
-    fs.writeFileSync(tmpxmlfile.name, root.end());
+    if (holdItems.length > 0) {
+      root = xmlbuilder.create('paging_list', {
+        'version': '1.0',
+        'encoding': 'UTF-8'
+      }).att('count', holdItems.length).att('location', config.BRANCHES[branch]).att('timestamp', moment().utcOffset(-8).toISOString(true));
 
-    require('child_process').execSync(`xsltproc ${config.XSL_TITLE} ${tmpxmlfile.name} > ${titleHtml}`);
-
-    tmpxmlfile.removeCallback();
-  } else {
-    try { fs.unlinkSync(titleHtml); } catch (e) {}
-    fs.symlinkSync(`${config.HTML_OUTPUT_DIR}/no_title_list.html`, titleHtml);
-  }
-
-  if (items.length > 0) { 
-    root = xmlbuilder.create('paging_list', {
-      'version': '1.0',
-      'encoding': 'UTF-8'
-    }).att('count', items.length).att('location', config.BRANCHES[branch]).att('timestamp', moment().utcOffset(-8).toISOString(true));
-
-    for (let record of items) {
-      root.ele({
-        'record': {
+      holdItems.forEach(record => {
+        root.ele({
+          'record': {
           'location': record.currentLocation,
           'loc_desc': record.locationDesc,
           'title': record.title,
           'call_number': record.callNumber,
           'barcode': record.barcode,
           'author': record.author
-        }
+        }});
       });
+
+      tmpXmlFile  = tmp.fileSync();
+      fs.writeFileSync(tmpXmlFile.name, root.end());
+    
+      require('child_process').execSync(`xsltproc ${config[holdType.xslConfigOption]} ${tmpXmlFile.name} > ${htmlFile}`);
+
+      tmpXmlFile.removeCallback();
+    } else {
+      fs.symlinkSync(`${config.HTML_OUTPUT_DIR}/no_${holdType.htmlSuffix}_list.html`, htmlFile);
     }
-
-    tmpxmlfile = tmp.fileSync();
-    fs.writeFileSync(tmpxmlfile.name, root.end());
-
-    require('child_process').execSync(`xsltproc ${config.XSL_ITEM} ${tmpxmlfile.name} > ${itemHtml}`);
-
-    tmpxmlfile.removeCallback();
-  } else {
-    try { fs.unlinkSync(itemHtml); } catch (e) {}
-    fs.symlinkSync(`${config.HTML_OUTPUT_DIR}/no_item_list.html`, itemHtml);
-  }
+  });
 }
 
 function processBranch(branch) {
@@ -160,10 +129,11 @@ function processBranch(branch) {
      return loginResponse.data;
    })
   .then(loginData => Promise.all([loginData, ILSWS.holdItemPullList(loginData.sessionToken, branch)]))
-  .then(([loginData, pullListResponse]) => Promise.all([loginData, pullListResponse.data])) 
+  .then(([loginData, pullListResponse]) => {
+    if (isError(pullListResponse)) throw pullListResponse;
+    return Promise.all([loginData, pullListResponse.data])
+  }) 
   .then(([loginData, pullListData]) => {
-    if (isError(pullListData)) return;
-
     pullListData.fields.pullList.filter(record => record.fields.holdRecord.fields.status !== 'EXPIRED').map(record => {
       records.push({
         barcode: record.fields.item.fields.barcode,
@@ -183,7 +153,7 @@ function processBranch(branch) {
     records.sort((a,b) => config.SORT_ORDER.map(f => a[f].localeCompare(b[f])).find(e => e !== 0));
         
     writeCsv(branch, records);
-    writeXml(branch, records);
+    writeHtml(branch, records);
   });
 }
 
@@ -194,7 +164,6 @@ async function start() {
       await processBranch(branch);
     } catch (error) {
       console.log(error);
-      console.log(error.toString());
       process.exit(1);
     }
     console.log(`${branch}: ${new Date() - start}ms`);
