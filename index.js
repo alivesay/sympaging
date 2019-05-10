@@ -1,4 +1,4 @@
-'use strict';
+"use strict";
 
 //    _______  ______ ___  ____  ____ _____ _(_)___  ____ _
 //   / ___/ / / / __ `__ \/ __ \/ __ `/ __ `/ / __ \/ __ `/
@@ -128,23 +128,23 @@ function processBranch(branch) {
 
      return loginResponse.data;
    })
-  .then(loginData => Promise.all([loginData, ILSWS.holdItemPullList(loginData.sessionToken, branch)]))
-  .then(([loginData, pullListResponse]) => {
+  .then(loginData => ILSWS.holdItemPullList(loginData.sessionToken, branch))
+  .then(pullListResponse => {
     if (isError(pullListResponse)) throw pullListResponse;
-    return Promise.all([loginData, pullListResponse.data])
-  }) 
-  .then(([loginData, pullListData]) => {
-    pullListData.fields.pullList.filter(record => record.fields.holdRecord.fields.status !== 'EXPIRED').map(record => {
+    return pullListResponse.data;
+  })
+  .then(pullListData => {
+    pullListData.fields.pullList.filter(record => record.fields.holdRecord.fields.status !== 'EXPIRED').map(({fields}) => {
       records.push({
-        barcode: record.fields.item.fields.barcode,
-        title: record.fields.item.fields.call.fields.bib.fields.title, 
-        author:  record.fields.item.fields.call.fields.bib.fields.author,
-        callNumber: record.fields.item.fields.call.fields.callNumber,
-        volume: record.fields.item.fields.call.fields.volumetric || '',
-        bib: record.fields.item.fields.call.fields.bib.fields.titleControlNumber,
-        holdType: record.fields.holdRecord.fields.holdType,
-        currentLocation: record.fields.item.fields.currentLocation.key,
-        locationDesc: record.fields.item.fields.currentLocation.fields.description
+        barcode: fields.item.fields.barcode,
+        title: fields.item.fields.call.fields.bib.fields.title,
+        author:  fields.item.fields.call.fields.bib.fields.author,
+        callNumber: fields.item.fields.call.fields.callNumber,
+        volume: fields.item.fields.call.fields.volumetric || '',
+        bib: fields.item.fields.call.fields.bib.fields.titleControlNumber,
+        holdType: fields.holdRecord.fields.holdType,
+        currentLocation: fields.item.fields.currentLocation.key,
+        locationDesc: fields.item.fields.currentLocation.fields.description
       });
     });
 
@@ -173,3 +173,5 @@ async function start() {
 }
 
 start();
+
+process.on('exit', manager.detach);
