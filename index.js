@@ -67,19 +67,12 @@ function writeCsv(branch, records) {
     { id: 'currentLocation', title: 'LOCATION' }
   ];
 
-  let csvWriter = createCsvWriter({
-    path: `/tmp/${config.BRANCHES[branch]}_Title.csv`,
-    header: csvHeader
+  [{id: 'COPY', name: 'Title'}, {id: 'TITLE', name: 'Items'}].forEach(holdType => {
+    createCsvWriter({
+      path: `/tmp/${config.BRANCHES[branch]}_${holdType.name}.csv`,
+      header: csvHeader
+    }).writeRecords(records.filter(record => record.holdType === holdType.id));
   });
-
-    csvWriter.writeRecords(titles);
-  
-  csvWriter = createCsvWriter({
-    path: `/tmp/${config.BRANCHES[branch]}_Items.csv`,
-    header: csvHeader
-  });
-
-  csvWriter.writeRecords(items);
 }
 
 function writeXml(branch, records) {
