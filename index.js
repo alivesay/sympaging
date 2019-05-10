@@ -98,13 +98,14 @@ function writeHtml(branch, records) {
       holdItems.forEach(record => {
         root.ele({
           'record': {
-          'location': record.currentLocation,
-          'loc_desc': record.locationDesc,
-          'title': record.title,
-          'call_number': record.callNumber,
-          'barcode': record.barcode,
-          'author': record.author
-        }});
+            'location': record.currentLocation,
+            'loc_desc': record.locationDesc,
+            'title': record.title,
+            'call_number': record.callNumber,
+            'barcode': record.barcode,
+            'author': record.author
+          }
+        });
       });
 
       tmpXmlFile  = tmp.fileSync();
