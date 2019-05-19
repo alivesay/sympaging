@@ -56,8 +56,8 @@ const ILSWS = {
 };
 
 const holdTypes = [
-  { id: 'COPY', csvSuffix: 'Title', htmlSuffix: 'title', xslConfigOption: 'XSL_TITLE' },
-  { id: 'TITLE', csvSuffix: 'Items', htmlSuffix: 'item', xslConfigOption: 'XSL_ITEM' }
+  { id: 'TITLE', csvSuffix: 'Title', htmlSuffix: 'title', xslConfigOption: 'XSL_TITLE' },
+  { id: 'COPY', csvSuffix: 'Items', htmlSuffix: 'item', xslConfigOption: 'XSL_ITEM' }
 ];
 
 function writeCsv(branch, records) {
@@ -131,6 +131,7 @@ function processBranch(branch) {
    })
   .then(loginData => ILSWS.holdItemPullList(loginData.sessionToken, branch))
   .then(pullListResponse => {
+      console.log(pullListResponse);
     if (isError(pullListResponse)) throw pullListResponse;
     return pullListResponse.data;
   })
@@ -165,6 +166,7 @@ async function start() {
       await processBranch(branch);
     } catch (error) {
       console.log(error);
+      console.log(error.response.data);
       process.exit(1);
     }
     console.log(`${branch}: ${new Date() - start}ms`);
