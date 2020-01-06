@@ -14,6 +14,8 @@ const xmlbuilder = require('xmlbuilder');
 const moment = require('moment');
 const fs = require('fs');
 const tmp = require('tmp');
+const Email = require('email-templates');
+const nodemailer = require('nodemailer');
 
 const config = require('./config.json');
 
@@ -40,7 +42,9 @@ api.interceptors.request.use(req => {
   return req;
 });
 
-axiosRetry(api, { retries: 3, retryDelay: axiosRetry.exponetialDelay });
+if (process.env.NODE_ENV !== 'debug') {
+  axiosRetry(api, { retries: 3, retryDelay: axiosRetry.exponetialDelay });
+}
 
 const manager = ConcurrencyManager(api, MAX_CONCURRENT_REQUESTS);
 
@@ -62,29 +66,38 @@ const holdTypes = [
 
 function writeCsv(branch, records) {
   const csvHeader = [
-    { id: 'barcode', title: 'BARCODE' },
-    { id: 'title', title: 'TITLE' },
-    { id: 'author', title: 'AUTHOR' },
+    { id: 'currentLocation', title: 'LOCATION' },
+    { id: 'locationDesc', title: 'LOCATION DESC' },
     { id: 'callNumber', title: 'CALL #' },
+    { id: 'author', title: 'AUTHOR' },
+    { id: 'title', title: 'TITLE' },
     { id: 'volume', title: 'VOLUME' },
-    { id: 'currentLocation', title: 'LOCATION' }
+    { id: 'barcode', title: 'BARCODE' }
   ];
 
+  let paths = [];
+
   holdTypes.forEach(holdType => {
+    paths.push(`/tmp/${config.BRANCHES[branch]}_${holdType.csvSuffix}.csv`);
     createCsvWriter({
-      path: `/tmp/${config.BRANCHES[branch]}_${holdType.csvSuffix}.csv`,
+      path: paths.slice(-1)[0],
       header: csvHeader
     }).writeRecords(records.filter(record => record.holdType === holdType.id));
   });
+
+  return paths;
 }
 
 function writeHtml(branch, records) {
   let root;
   let tmpXmlFile;
   let htmlFile;
+  let paths = [];
 
   holdTypes.forEach(holdType => {
     htmlFile = `${config.HTML_OUTPUT_DIR}/${config.BRANCHES[branch]}/latest_${holdType.htmlSuffix}.html`;
+    paths.push(htmlFile);
+
     try { fs.unlinkSync(htmlFile); } catch (e) {}
 
     const holdItems = records.filter(record => record.holdType === holdType.id);
@@ -118,6 +131,32 @@ function writeHtml(branch, records) {
       fs.symlinkSync(`${config.HTML_OUTPUT_DIR}/no_${holdType.htmlSuffix}_list.html`, htmlFile);
     }
   });
+
+  return paths;
+}
+
+function sendEmail(branch, csvPaths, htmlPaths) {
+  const email = new Email({
+    message: {
+      from: config.EMAIL_FROM,
+    },
+    send: true,
+    transport: nodemailer.createTransport({
+      sendmail: true
+    })
+  });
+
+  email.send({
+    template: 'default',
+    message: {
+      to: config.BRANCH_EMAILS[branch],
+      attachments: [...csvPaths, ...htmlPaths].map(f => ({ path: f }))
+    },
+    locals: {
+      branch: config.BRANCHES[branch],
+      date: moment().format('ll')
+    }
+  });
 }
 
 function processBranch(branch) {
@@ -131,7 +170,6 @@ function processBranch(branch) {
    })
   .then(loginData => ILSWS.holdItemPullList(loginData.sessionToken, branch))
   .then(pullListResponse => {
-      console.log(pullListResponse);
     if (isError(pullListResponse)) throw pullListResponse;
     return pullListResponse.data;
   })
@@ -154,8 +192,7 @@ function processBranch(branch) {
 
     records.sort((a,b) => config.SORT_ORDER.map(f => a[f].localeCompare(b[f])).find(e => e !== 0));
         
-    writeCsv(branch, records);
-    writeHtml(branch, records);
+    sendEmail(branch, writeCsv(branch, records), writeHtml(branch, records));
   });
 }
 
