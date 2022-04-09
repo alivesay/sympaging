@@ -15,7 +15,7 @@
     "commander": "^2.20.0",
     "csv-writer": "^1.2.0",
     "email-templates": "^5.0.5",
-    "moment": "^2.24.0",
+    "moment": "^2.29.2",
     "nodemailer": "^6.1.1",
     "pug": "^2.0.3",
     "tmp": "^0.1.0",
